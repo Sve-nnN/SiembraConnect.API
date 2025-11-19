@@ -1,0 +1,111 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "siembraconnect-api"
+        HOST_PORT = "8085"
+        CONTAINER_PORT = "8080"
+    }
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build con Maven') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh 'chmod +x mvnw'
+                        sh './mvnw -B clean package -DskipTests'
+                    } else {
+                        bat 'mvnw.cmd -B clean package -DskipTests'
+                    }
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('Tests Unitarios') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh './mvnw test'
+                    } else {
+                        bat 'mvnw.cmd test'
+                    }
+                }
+            }
+            post {
+                always {
+                    junit testResults: 'target/surefire-reports/**/*.xml', allowEmptyResults: true
+                }
+            }
+        }
+
+        stage('Construir Imagen Docker') {
+            steps {
+                script {
+                    def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
+                    if (isUnix()) {
+                        sh """
+                            docker build -t ${imageTag} -t ${IMAGE_NAME}:latest .
+                        """
+                    } else {
+                        bat """
+                            docker build -t ${imageTag} -t ${IMAGE_NAME}:latest .
+                        """
+                    }
+                    echo "Imagen construida: ${imageTag}"
+                }
+            }
+        }
+
+        stage('Despliegue') {
+            steps {
+                script {
+                    def containerName = "${IMAGE_NAME}-${env.BUILD_NUMBER}"
+                    if (isUnix()) {
+                        sh """
+                            docker stop ${containerName} 2>/dev/null || true
+                            docker rm ${containerName} 2>/dev/null || true
+                            docker run -d --name ${containerName} \
+                                -p ${HOST_PORT}:${CONTAINER_PORT} \
+                                ${IMAGE_NAME}:latest
+                        """
+                    } else {
+                        bat """
+                            docker stop ${containerName} 2>nul || exit /b 0
+                            docker rm ${containerName} 2>nul || exit /b 0
+                            docker run -d --name ${containerName} -p ${HOST_PORT}:${CONTAINER_PORT} ${IMAGE_NAME}:latest
+                        """
+                    }
+                    echo "Aplicación desplegada en http://localhost:${HOST_PORT}/api/v1/productos"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline completado. Imagen: ${IMAGE_NAME}:latest"
+        }
+        failure {
+            echo "Pipeline falló. Revisa los logs."
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
