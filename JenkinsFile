@@ -5,6 +5,7 @@ pipeline {
         IMAGE_NAME = "siembraconnect-api"
         HOST_PORT = "8085"
         CONTAINER_PORT = "8080"
+        DOCKER_AVAILABLE = 'false'
     }
 
     options {
@@ -16,6 +17,25 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+            }
+        }
+
+        stage('Verificar Docker') {
+            steps {
+                script {
+                    try {
+                        if (isUnix()) {
+                            sh 'docker --version'
+                        } else {
+                            bat 'docker --version'
+                        }
+                        env.DOCKER_AVAILABLE = 'true'
+                        echo "✅ Docker disponible"
+                    } catch (Exception e) {
+                        env.DOCKER_AVAILABLE = 'false'
+                        echo "⚠️  Docker no disponible - solo se compilará el JAR"
+                    }
+                }
             }
         }
 
@@ -55,6 +75,9 @@ pipeline {
         }
 
         stage('Construir Imagen Docker') {
+            when {
+                expression { env.DOCKER_AVAILABLE == 'true' }
+            }
             steps {
                 script {
                     def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
@@ -73,6 +96,9 @@ pipeline {
         }
 
         stage('Despliegue') {
+            when {
+                expression { env.DOCKER_AVAILABLE == 'true' }
+            }
             steps {
                 script {
                     def containerName = "${IMAGE_NAME}-${env.BUILD_NUMBER}"
